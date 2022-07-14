@@ -62,7 +62,7 @@ func (s *AWorker) QueueSize() int {
 	return int(atomic.LoadInt32(&s.currentQueueSize))
 }
 
-func (s *AWorker) SendExtLogMessage(message any) {
+func (s *AWorker) SendMessage(message any) {
 	s.mu.Lock()
 
 	if !s.started {
