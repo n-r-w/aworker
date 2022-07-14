@@ -13,6 +13,7 @@ type AWorker struct {
 	mu               sync.Mutex
 	started          bool
 	buffer           chan any
+	workerCount      int
 	currentQueueSize int32
 
 	chanOnExit chan struct{}
@@ -22,11 +23,12 @@ type AWorker struct {
 	errorFunc     ErrorFunc
 }
 
-func NewAWorker(queueSize int, processorFunc ProcessorFunc, errorFunc ErrorFunc) *AWorker {
+func NewAWorker(queueSize int, workerCount int, processorFunc ProcessorFunc, errorFunc ErrorFunc) *AWorker {
 	s := &AWorker{
 		mu:               sync.Mutex{},
 		started:          false,
 		buffer:           make(chan any, queueSize),
+		workerCount:      workerCount,
 		currentQueueSize: 0,
 		chanOnExit:       make(chan struct{}),
 		wgExit:           sync.WaitGroup{},
@@ -43,7 +45,10 @@ func (s *AWorker) Start() {
 		panic("already started")
 	}
 	s.started = true
-	go s.worker()
+	for i := 0; i < s.workerCount; i++ {
+		s.wgExit.Add(1)
+		go s.worker()
+	}
 	s.mu.Unlock()
 }
 
@@ -52,10 +57,12 @@ func (s *AWorker) Stop() {
 	s.started = false
 	s.mu.Unlock()
 
-	s.wgExit.Add(1)
 	close(s.buffer)
-	s.chanOnExit <- struct{}{}
-	s.wgExit.Wait() // ждем пока будет выход из воркера
+	for i := 0; i < s.workerCount; i++ {
+		s.chanOnExit <- struct{}{}
+	}
+	s.wgExit.Wait() // ждем пока будет выход из воркеров
+	close(s.chanOnExit)
 }
 
 func (s *AWorker) QueueSize() int {
