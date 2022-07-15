@@ -4,6 +4,7 @@ package aworker
 import (
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type ProcessorFunc func(messages []any) error
@@ -95,6 +96,9 @@ func (s *AWorker) worker() {
 
 		default:
 			s.processMessages(false)
+			// вынужденный компромисс, т.к. в противном случае придется передавать сообщение на обработку
+			// по одному, по мере получения их из канала, вместо того, чтобы группировать
+			time.Sleep(time.Millisecond)
 		}
 	}
 }
