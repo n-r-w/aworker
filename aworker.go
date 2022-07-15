@@ -15,6 +15,7 @@ type AWorker struct {
 	buffer           chan any
 	workerCount      int
 	currentQueueSize int32
+	packetSize       int
 
 	chanOnExit chan struct{}
 	wgExit     sync.WaitGroup
@@ -23,13 +24,14 @@ type AWorker struct {
 	errorFunc     ErrorFunc
 }
 
-func NewAWorker(queueSize int, workerCount int, processorFunc ProcessorFunc, errorFunc ErrorFunc) *AWorker {
+func NewAWorker(queueSize int, packetSize int, workerCount int, processorFunc ProcessorFunc, errorFunc ErrorFunc) *AWorker {
 	s := &AWorker{
 		mu:               sync.Mutex{},
 		started:          false,
 		buffer:           make(chan any, queueSize),
 		workerCount:      workerCount,
 		currentQueueSize: 0,
+		packetSize:       packetSize,
 		chanOnExit:       make(chan struct{}),
 		wgExit:           sync.WaitGroup{},
 		processorFunc:    processorFunc,
@@ -47,8 +49,7 @@ func (s *AWorker) Start() {
 	s.started = true
 	for i := 0; i < s.workerCount; i++ {
 		s.wgExit.Add(1)
-		num := i
-		go s.worker(num)
+		go s.worker()
 	}
 	s.mu.Unlock()
 }
@@ -83,30 +84,52 @@ func (s *AWorker) SendMessage(message any) {
 	atomic.AddInt32(&s.currentQueueSize, 1)
 }
 
-func (s *AWorker) worker(number int) {
+func (s *AWorker) worker() {
 	for {
 		select {
 		case <-s.chanOnExit:
-			s.processMessages(number)
+			s.processMessages(true)
 
 			defer s.wgExit.Done()
 			return
 
 		default:
-			s.processMessages(number)
+			s.processMessages(false)
 		}
 	}
 }
 
-func (s *AWorker) processMessages(number int) {
+func (s *AWorker) processMessages(all bool) {
 	var messages []any
-	for m := range s.buffer {
-		messages = append(messages, m)
+	hasData := true
+	var m any
+	for hasData {
+		select {
+		case m, hasData = <-s.buffer:
+			if hasData {
+				messages = append(messages, m)
+
+				if len(messages) >= s.packetSize {
+					s.processMessagesHelper(messages)
+					messages = nil
+					if !all {
+						hasData = false
+					}
+				}
+			}
+		default:
+			hasData = false
+		}
 	}
+
+	s.processMessagesHelper(messages)
+}
+
+func (s *AWorker) processMessagesHelper(messages []any) {
 	if len(messages) == 0 {
 		return
 	}
-	// fmt.Printf("worker %d, messages %d\n", number+1, len(messages))
+
 	err := s.processorFunc(messages)
 	atomic.AddInt32(&s.currentQueueSize, int32(-len(messages)))
 	if err != nil && s.errorFunc != nil {

@@ -10,20 +10,25 @@ import (
 )
 
 func Test(t *testing.T) {
-	w := NewAWorker(100, runtime.NumCPU(), processor, onError)
+	const packetSize = 100
+	var bufferSize = runtime.NumCPU() * 20000
+
+	w := NewAWorker(bufferSize, packetSize, runtime.NumCPU(), processor, onError)
 	w.Start()
 
-	for j := 0; j < runtime.NumCPU()*2000; j++ {
+	for j := 0; j < bufferSize; j++ {
 		w.SendMessage(strconv.Itoa(j))
 	}
 
-	time.Sleep(time.Second)
+	for w.QueueSize() > 0 {
+		time.Sleep(time.Millisecond)
+	}
 
 	wg := sync.WaitGroup{}
 	for i := 0; i < runtime.NumCPU(); i++ {
 		wg.Add(1)
 		go func() {
-			for j := 0; j < runtime.NumCPU()*2000; j++ {
+			for j := 0; j < runtime.NumCPU()*1000; j++ {
 				w.SendMessage(strconv.Itoa(j))
 			}
 			wg.Done()

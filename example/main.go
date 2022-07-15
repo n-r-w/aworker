@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"runtime"
 	"strconv"
 	"sync"
@@ -10,20 +11,28 @@ import (
 )
 
 func main() {
-	w := aworker.NewAWorker(100, runtime.NumCPU(), processor, onError)
-	w.Start()
+	const packetSize = 100
+	var bufferSize = runtime.NumCPU() * 20000
 
-	for j := 0; j < runtime.NumCPU()*2000; j++ {
+	w := aworker.NewAWorker(bufferSize, packetSize, runtime.NumCPU(), processor, onError)
+	w.Start()
+	fmt.Println("started")
+
+	for j := 0; j < bufferSize; j++ {
 		w.SendMessage(strconv.Itoa(j))
 	}
 
-	time.Sleep(time.Second)
+	fmt.Println("waiting done")
+	for w.QueueSize() > 0 {
+		time.Sleep(time.Millisecond)
+	}
 
+	fmt.Println("sending async")
 	wg := sync.WaitGroup{}
 	for i := 0; i < runtime.NumCPU(); i++ {
 		wg.Add(1)
 		go func() {
-			for j := 0; j < runtime.NumCPU()*2000; j++ {
+			for j := 0; j < runtime.NumCPU()*200; j++ {
 				w.SendMessage(strconv.Itoa(j))
 			}
 			wg.Done()
@@ -39,8 +48,9 @@ func main() {
 }
 
 func processor(messages []any) error {
+	fmt.Println("processing: ", len(messages))
 	for range messages {
-		for i := 0; i < runtime.NumCPU()*1000; i++ {
+		for i := 0; i < runtime.NumCPU()*5000; i++ {
 			_ = float64(i) * float64(i) / 2.0
 		}
 	}
