@@ -1,16 +1,16 @@
-// Package aworker асинхронная фоновая обработка произвольных сообщений
-package aworker
+package main
 
 import (
 	"runtime"
 	"strconv"
 	"sync"
-	"testing"
 	"time"
+
+	"github.com/n-r-w/aworker"
 )
 
-func Test(t *testing.T) {
-	w := NewAWorker(100, runtime.NumCPU(), processor, onError)
+func main() {
+	w := aworker.NewAWorker(100, runtime.NumCPU(), processor, onError)
 	w.Start()
 
 	for j := 0; j < runtime.NumCPU()*2000; j++ {
@@ -34,7 +34,7 @@ func Test(t *testing.T) {
 	w.Stop()
 
 	if w.QueueSize() != 0 {
-		t.Error("internal error")
+		panic("internal error")
 	}
 }
 

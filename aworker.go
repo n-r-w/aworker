@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 )
 
-type ProcessorFunc func(message any) error
+type ProcessorFunc func(messages []any) error
 type ErrorFunc func(err error)
 
 type AWorker struct {
@@ -47,7 +47,8 @@ func (s *AWorker) Start() {
 	s.started = true
 	for i := 0; i < s.workerCount; i++ {
 		s.wgExit.Add(1)
-		go s.worker()
+		num := i
+		go s.worker(num)
 	}
 	s.mu.Unlock()
 }
@@ -82,31 +83,33 @@ func (s *AWorker) SendMessage(message any) {
 	atomic.AddInt32(&s.currentQueueSize, 1)
 }
 
-func (s *AWorker) worker() {
+func (s *AWorker) worker(number int) {
 	for {
 		select {
 		case <-s.chanOnExit:
-			for {
-				if m, ok := <-s.buffer; ok {
-					err := s.processorFunc(m)
-					atomic.AddInt32(&s.currentQueueSize, -1)
-					if err != nil && s.errorFunc != nil {
-						s.errorFunc(err)
-					}
-				} else {
-					defer s.wgExit.Done()
-					return
-				}
-			}
+			s.processMessages(number)
 
-		case m, ok := <-s.buffer:
-			if ok {
-				err := s.processorFunc(m)
-				atomic.AddInt32(&s.currentQueueSize, -1)
-				if err != nil && s.errorFunc != nil {
-					s.errorFunc(err)
-				}
-			}
+			defer s.wgExit.Done()
+			return
+
+		default:
+			s.processMessages(number)
 		}
+	}
+}
+
+func (s *AWorker) processMessages(number int) {
+	var messages []any
+	for m := range s.buffer {
+		messages = append(messages, m)
+	}
+	if len(messages) == 0 {
+		return
+	}
+	// fmt.Printf("worker %d, messages %d\n", number+1, len(messages))
+	err := s.processorFunc(messages)
+	atomic.AddInt32(&s.currentQueueSize, int32(-len(messages)))
+	if err != nil && s.errorFunc != nil {
+		s.errorFunc(err)
 	}
 }
