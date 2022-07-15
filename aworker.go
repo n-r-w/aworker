@@ -4,7 +4,6 @@ package aworker
 import (
 	"sync"
 	"sync/atomic"
-	"time"
 )
 
 type ProcessorFunc func(messages []any) error
@@ -14,12 +13,11 @@ type AWorker struct {
 	mu               sync.Mutex
 	started          bool
 	buffer           chan any
+	wakeup           chan struct{}
 	workerCount      int
 	currentQueueSize int32
 	packetSize       int
-
-	// chanOnExit chan struct{}
-	wgExit sync.WaitGroup
+	wgExit           sync.WaitGroup
 
 	processorFunc ProcessorFunc
 	errorFunc     ErrorFunc
@@ -36,13 +34,13 @@ func NewAWorker(queueSize int, packetSize int, workerCount int, processorFunc Pr
 		mu:               sync.Mutex{},
 		started:          false,
 		buffer:           make(chan any, queueSize),
+		wakeup:           make(chan struct{}),
 		workerCount:      workerCount,
 		currentQueueSize: 0,
 		packetSize:       packetSize,
-		// chanOnExit:       make(chan struct{}),
-		wgExit:        sync.WaitGroup{},
-		processorFunc: processorFunc,
-		errorFunc:     errorFunc,
+		wgExit:           sync.WaitGroup{},
+		processorFunc:    processorFunc,
+		errorFunc:        errorFunc,
 	}
 
 	return s
@@ -66,6 +64,7 @@ func (s *AWorker) Stop() {
 	s.started = false
 	s.mu.Unlock()
 
+	close(s.wakeup)
 	close(s.buffer)
 	s.wgExit.Wait() // ждем пока будет выход из воркеров
 }
@@ -76,13 +75,13 @@ func (s *AWorker) QueueSize() int {
 
 func (s *AWorker) SendMessage(message any) {
 	s.mu.Lock()
-
 	if !s.started {
 		panic("sent to stopped service")
 	}
+	s.mu.Unlock()
 
 	s.buffer <- message
-	s.mu.Unlock()
+	s.wakeup <- struct{}{}
 
 	atomic.AddInt32(&s.currentQueueSize, 1)
 }
@@ -110,9 +109,8 @@ func (s *AWorker) worker() {
 				s.processMessages(messages)
 				messages = nil
 
-				// вынужденный компромисс, т.к. в противном случае придется передавать сообщение на обработку
-				// по одному, по мере получения их из канала, вместо того, чтобы группировать по packetSize
-				time.Sleep(time.Millisecond)
+				// переходим в режим ожидания
+				<-s.wakeup
 			}
 		}
 	}
