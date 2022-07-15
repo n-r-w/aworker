@@ -18,13 +18,19 @@ type AWorker struct {
 	currentQueueSize int32
 	packetSize       int
 
-	chanOnExit chan struct{}
-	wgExit     sync.WaitGroup
+	// chanOnExit chan struct{}
+	wgExit sync.WaitGroup
 
 	processorFunc ProcessorFunc
 	errorFunc     ErrorFunc
 }
 
+/* NewAWorker создание обработчика
+queueSize - размер буфера сообщений
+packetSize - по сколько сообщений за раз максимум будет передаваться в processorFunc
+workerCount - количество горутин на параллельную обработку
+processorFunc = функция обработки сообщений
+errorFunc - функция, в которую будут отправляться ошибки (может быть nil) */
 func NewAWorker(queueSize int, packetSize int, workerCount int, processorFunc ProcessorFunc, errorFunc ErrorFunc) *AWorker {
 	s := &AWorker{
 		mu:               sync.Mutex{},
@@ -33,10 +39,10 @@ func NewAWorker(queueSize int, packetSize int, workerCount int, processorFunc Pr
 		workerCount:      workerCount,
 		currentQueueSize: 0,
 		packetSize:       packetSize,
-		chanOnExit:       make(chan struct{}),
-		wgExit:           sync.WaitGroup{},
-		processorFunc:    processorFunc,
-		errorFunc:        errorFunc,
+		// chanOnExit:       make(chan struct{}),
+		wgExit:        sync.WaitGroup{},
+		processorFunc: processorFunc,
+		errorFunc:     errorFunc,
 	}
 
 	return s
@@ -61,11 +67,7 @@ func (s *AWorker) Stop() {
 	s.mu.Unlock()
 
 	close(s.buffer)
-	for i := 0; i < s.workerCount; i++ {
-		s.chanOnExit <- struct{}{}
-	}
 	s.wgExit.Wait() // ждем пока будет выход из воркеров
-	close(s.chanOnExit)
 }
 
 func (s *AWorker) QueueSize() int {
@@ -86,50 +88,37 @@ func (s *AWorker) SendMessage(message any) {
 }
 
 func (s *AWorker) worker() {
+	defer s.wgExit.Done()
+
 	for {
-		select {
-		case <-s.chanOnExit:
-			s.processMessages(true)
+		var messages []any
+		for {
+			select {
+			case m, hasData := <-s.buffer:
+				if hasData {
+					messages = append(messages, m)
 
-			defer s.wgExit.Done()
-			return
-
-		default:
-			s.processMessages(false)
-			// вынужденный компромисс, т.к. в противном случае придется передавать сообщение на обработку
-			// по одному, по мере получения их из канала, вместо того, чтобы группировать
-			time.Sleep(time.Millisecond)
-		}
-	}
-}
-
-func (s *AWorker) processMessages(all bool) {
-	var messages []any
-	hasData := true
-	var m any
-	for hasData {
-		select {
-		case m, hasData = <-s.buffer:
-			if hasData {
-				messages = append(messages, m)
-
-				if len(messages) >= s.packetSize {
-					s.processMessagesHelper(messages)
-					messages = nil
-					if !all {
-						hasData = false
+					if len(messages) >= s.packetSize {
+						s.processMessages(messages)
+						messages = nil
 					}
+				} else {
+					s.processMessages(messages)
+					return
 				}
+			default:
+				s.processMessages(messages)
+				messages = nil
+
+				// вынужденный компромисс, т.к. в противном случае придется передавать сообщение на обработку
+				// по одному, по мере получения их из канала, вместо того, чтобы группировать по packetSize
+				time.Sleep(time.Millisecond)
 			}
-		default:
-			hasData = false
 		}
 	}
-
-	s.processMessagesHelper(messages)
 }
 
-func (s *AWorker) processMessagesHelper(messages []any) {
+func (s *AWorker) processMessages(messages []any) {
 	if len(messages) == 0 {
 		return
 	}

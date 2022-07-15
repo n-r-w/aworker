@@ -22,6 +22,8 @@ func main() {
 		w.SendMessage(strconv.Itoa(j))
 	}
 
+	// time.Sleep(time.Second * 10)
+
 	fmt.Println("waiting done")
 	for w.QueueSize() > 0 {
 		time.Sleep(time.Millisecond)
